@@ -108,7 +108,7 @@ sg_poly = st.sidebar.slider("SG polyorder", 2, 7, 3)
 frft_order = st.sidebar.slider("Ordre FrFT (a)", 0.0, 2.0, 1.0, 0.1)
 pre_s = st.sidebar.slider("Fenêtre avant R (s)", 0.10,0.60,0.30,0.05)
 post_s = st.sidebar.slider("Fenêtre après R (s)",0.10,0.60,0.30,0.05)
-model_path = st.sidebar.text_input("Chemin modèle Keras (.h5)", "best_model_single.h5")
+model_path = st.sidebar.text_input("Chemin modèle Keras (.h5)", "best_model_single1.h5")
 classes_text = st.sidebar.text_input("Noms des classes (séparés par ,)", "")
 
 # Charger modèle
@@ -204,3 +204,4 @@ if predicted_indices:
         "%": [100*c/len(predicted_indices) for c in counts]
     })
     st.dataframe(df_summary)
+
