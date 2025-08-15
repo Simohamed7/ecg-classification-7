@@ -106,7 +106,7 @@ if uploaded_file is not None:
         ax.plot(magnitude)
         plt.tight_layout(pad=0)
         fig.canvas.draw()
-        img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        img_array = np.asarray(fig.canvas.buffer_rgba())
         img_array = img_array.reshape(fig.canvas.get_width_height()[::-1] + (3,))
         plt.close(fig)
 
@@ -121,3 +121,4 @@ if uploaded_file is not None:
             st.image(img_pil, caption=f"Battement {i+1}")
             st.write("Classe :", predicted_class)
             st.write("Probas :", np.round(preds[0], 3))
+
