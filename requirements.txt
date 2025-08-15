@@ -7,4 +7,6 @@ opencv-python
 pandas
 scipy
 pillow
+ecgdetectors
+
 
