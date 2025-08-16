@@ -58,17 +58,12 @@ def frft_magnitude_image(signal_1d, a, target_size=(224,224)):
 # Pan-Tompkins simplifié
 # ---------------------------
 def pan_tompkins_detect(signal, fs):
-    # 1. Filtrage bande-pass
     filtered = bandpass_filter(signal, 5, 15, fs)
-    # 2. Dérivée
     diff = np.diff(filtered)
     diff = np.append(diff, 0)
-    # 3. Carré
     squared = diff ** 2
-    # 4. Intégration sur fenêtre (150 ms)
     window = int(0.15 * fs)
     integrated = np.convolve(squared, np.ones(window)/window, mode='same')
-    # 5. Détection pics
     peaks, _ = find_peaks(integrated, distance=0.3*fs, height=np.mean(integrated))
     return peaks
 
@@ -99,17 +94,20 @@ def load_keras_model(path):
 st.set_page_config(page_title="ECG: Segmentation & Classification", layout="wide")
 st.title("🫀 ECG → Pan-Tompkins → 4 battements → FrFT → Classification")
 
+# Sidebar
 st.sidebar.header("⚙️ Paramètres")
 uploaded_file = st.sidebar.file_uploader("Importer (.mat, .csv, .png, .jpg)", type=["mat","csv","png","jpg","jpeg"])
 fs = st.sidebar.number_input("Fréquence d'échantillonnage (Hz)", value=360)
 use_savgol = st.sidebar.checkbox("Lissage Savitzky–Golay", value=True)
 sg_window = st.sidebar.slider("SG window", 5, 101, 21, step=2)
 sg_poly = st.sidebar.slider("SG polyorder", 2, 7, 3)
-frft_order = st.sidebar.slider("Ordre FrFT (a)", 0.0, 2.0, 1.0, 0.1)
 pre_s = st.sidebar.slider("Fenêtre avant R (s)", 0.10,0.60,0.30,0.05)
 post_s = st.sidebar.slider("Fenêtre après R (s)",0.10,0.60,0.30,0.05)
 model_path = st.sidebar.text_input("Chemin modèle Keras (.h5)", "best_model_single.h5")
-classes_text = st.sidebar.text_input("Noms des classes (séparés par ,)", "")
+
+# Classes
+class_names = ["F3", "N0", "Q4", "S1", "V2"]
+class_full_names = {"N0":"NORMAL","S1":"SUPRAVENTICULAR","V2":"VENTRICULAR","F3":"FUSION","Q4":"UNKNOWN"}
 
 # Charger modèle
 try:
@@ -138,10 +136,9 @@ elif uploaded_file.name.lower().endswith((".png","jpg","jpeg")):
     img_input = np.expand_dims(np.array(img)/255.0,0)
     preds = model.predict(img_input)
     pred_idx = np.argmax(preds,axis=1)[0]
-    class_names = [c.strip() for c in classes_text.split(",")] if classes_text.strip() else []
-    label = class_names[pred_idx] if class_names and pred_idx < len(class_names) else f"Classe {pred_idx}"
+    label_full = class_full_names.get(class_names[pred_idx], f"Classe {pred_idx}")
     st.image(img, caption="Image 224×224")
-    st.write("Classe:", label)
+    st.write("Classe:", label_full)
     st.write("Probabilités:", np.round(preds[0],3))
     st.stop()
 
@@ -174,35 +171,51 @@ else:
     bpm = 0.0
 st.metric("💓 Rythme cardiaque (BPM)", f"{bpm:.1f}")
 
+# Liste alpha 0→1 par pas 0.01
+alpha_list = np.arange(0,1.01,0.01)
+st.sidebar.subheader("⚡ Variation FrFT (alpha)")
+st.sidebar.write(f"{len(alpha_list)} valeurs de alpha")
+
 # Segmentation et classification
 beats, centers = extract_beats(filtered, r_peaks, fs, pre_s, post_s, max_beats=4)
 st.subheader("Segmentation 4 battements max")
 cols = st.columns(len(beats))
 
-class_names = [c.strip() for c in classes_text.split(",")] if classes_text.strip() else []
-predicted_indices = []
-
 for i, beat in enumerate(beats):
-    img_pil = frft_magnitude_image(beat, frft_order, (224,224))
-    img_input = np.expand_dims(np.array(img_pil)/255.0,0)
-    preds = model.predict(img_input)
-    pred_idx = np.argmax(preds,axis=1)[0]
-    predicted_indices.append(pred_idx)
-    label = class_names[pred_idx] if class_names and pred_idx < len(class_names) else f"Classe {pred_idx}"
-    with cols[i]:
-        st.image(img_pil, caption=f"Battement {i+1}")
-        st.write("Classe:", label)
-        st.write("Probabilités:", np.round(preds[0],3))
+    st.markdown(f"### Battement {i+1}")
+    beat_results = []
+    for a in alpha_list:
+        img_pil = frft_magnitude_image(beat, a, (224,224))
+        img_input = np.expand_dims(np.array(img_pil)/255.0,0)
+        preds = model.predict(img_input)
+        pred_idx = np.argmax(preds,axis=1)[0]
+        beat_results.append((a, pred_idx, preds[0]))
 
-# Résumé
-if predicted_indices:
-    st.subheader("Résumé des 4 battements")
-    unique, counts = np.unique(predicted_indices, return_counts=True)
-    df_summary = pd.DataFrame({
-        "Classe": [class_names[u] if class_names and u<len(class_names) else f"Classe {u}" for u in unique],
-        "# Battements": counts,
-        "%": [100*c/len(predicted_indices) for c in counts]
+    # Afficher l'image et prédiction pour alpha=0.5 par défaut
+    alpha_example = 0.5
+    idx_example = int(alpha_example/0.01)
+    img_example = frft_magnitude_image(beat, alpha_example, (224,224))
+    st.image(img_example, caption=f"Alpha={alpha_example}")
+    pred_idx = beat_results[idx_example][1]
+    label_full = class_full_names.get(class_names[pred_idx], f"Classe {pred_idx}")
+    st.write("Classe:", label_full)
+    st.write("Probabilités:", np.round(beat_results[idx_example][2],3))
+
+    # Optionnel : afficher tableau alpha vs prédiction
+    df_alpha = pd.DataFrame({
+        "Alpha": [r[0] for r in beat_results],
+        "Classe": [class_names[r[1]] for r in beat_results],
+        "Probabilité_max": [np.max(r[2]) for r in beat_results]
     })
-    st.dataframe(df_summary)
+    st.dataframe(df_alpha)
 
-
+# Résumé global
+st.subheader("Résumé des 4 battements")
+predicted_indices = [np.argmax(model.predict(np.expand_dims(np.array(frft_magnitude_image(beat, 0.5, (224,224)))/255.0,0))) for beat in beats]
+unique, counts = np.unique(predicted_indices, return_counts=True)
+df_summary = pd.DataFrame({
+    "Classe": [class_full_names.get(class_names[u], f"Classe {u}") for u in unique],
+    "# Battements": counts,
+    "%": [100*c/len(predicted_indices) for c in counts]
+})
+st.dataframe(df_summary)
