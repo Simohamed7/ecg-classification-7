@@ -82,57 +82,57 @@ def extract_beats(signal_1d, r_peaks, fs, pre_s=0.3, post_s=0.3, max_beats=4):
     return beats, centers
 
 # ---------------------------
-# Charger modèle Keras
+# Streamlit interface
 # ---------------------------
-@st.cache_resource
-def load_keras_model(path):
-    return load_model(path)
-
-# ---------------------------
-# Interface Streamlit
-# ---------------------------
-st.set_page_config(page_title="ECG: Segmentation & Classification", layout="wide")
+st.set_page_config(page_title="ECG Segmentation & Classification", layout="wide")
 st.title("🫀 ECG → Pan-Tompkins → 4 battements → FrFT → Classification")
 
-# Sidebar
+# Sidebar paramètres
 st.sidebar.header("⚙️ Paramètres")
-uploaded_file = st.sidebar.file_uploader("Importer (.mat, .csv, .png, .jpg)", type=["mat","csv","png","jpg","jpeg"])
+uploaded_signal = st.sidebar.file_uploader("Importer ECG (.mat, .csv, .png, .jpg)", type=["mat","csv","png","jpg","jpeg"])
+model_file = st.sidebar.file_uploader("Charger modèle Keras (.h5)", type=["h5"])
+
 fs = st.sidebar.number_input("Fréquence d'échantillonnage (Hz)", value=360)
 use_savgol = st.sidebar.checkbox("Lissage Savitzky–Golay", value=True)
 sg_window = st.sidebar.slider("SG window", 5, 101, 21, step=2)
 sg_poly = st.sidebar.slider("SG polyorder", 2, 7, 3)
 pre_s = st.sidebar.slider("Fenêtre avant R (s)", 0.10,0.60,0.30,0.05)
 post_s = st.sidebar.slider("Fenêtre après R (s)",0.10,0.60,0.30,0.05)
-model_path = st.sidebar.text_input("Chemin modèle Keras (.h5)", "best_model_single.h5")
 
 # Classes
 class_names = ["F3", "N0", "Q4", "S1", "V2"]
-class_full_names = {"N0":"NORMAL","S1":"SUPRAVENTICULAR","V2":"VENTRICULAR","F3":"FUSION","Q4":"UNKNOWN"}
+class_full_names = {"N0":"NORMAL","S1":"SUPRAVENTRICULAR","V2":"VENTRICULAR","F3":"FUSION","Q4":"UNKNOWN"}
 
-# Charger modèle
-try:
-    model = load_keras_model(model_path)
-except Exception as e:
-    st.error(f"Erreur chargement modèle: {e}")
+# Vérifier upload modèle
+if model_file is None:
+    st.warning("Veuillez uploader votre modèle `.h5` pour continuer.")
+    st.stop()
+else:
+    try:
+        model = load_model(model_file)
+        st.success("Modèle chargé avec succès !")
+    except Exception as e:
+        st.error(f"Erreur lors du chargement du modèle: {e}")
+        st.stop()
+
+# Vérifier upload signal
+if uploaded_signal is None:
+    st.info("Chargez un fichier ECG pour commencer.")
     st.stop()
 
 # Charger signal
-if uploaded_file is None:
-    st.info("Chargez un fichier ECG (.mat/.csv) ou image (.png/.jpg).")
-    st.stop()
-
-if uploaded_file.name.lower().endswith(".mat"):
-    mat_data = sio.loadmat(uploaded_file)
+if uploaded_signal.name.lower().endswith(".mat"):
+    mat_data = sio.loadmat(uploaded_signal)
     for key in mat_data:
         if not key.startswith("__"):
             signal = np.ravel(mat_data[key])
             break
-elif uploaded_file.name.lower().endswith(".csv"):
-    df = pd.read_csv(uploaded_file)
+elif uploaded_signal.name.lower().endswith(".csv"):
+    df = pd.read_csv(uploaded_signal)
     signal = df.iloc[:,0].values.astype(float)
-elif uploaded_file.name.lower().endswith((".png","jpg","jpeg")):
+elif uploaded_signal.name.lower().endswith((".png","jpg","jpeg")):
     st.warning("Pour images directes, classification sans segmentation.")
-    img = Image.open(uploaded_file).convert("RGB").resize((224,224))
+    img = Image.open(uploaded_signal).convert("RGB").resize((224,224))
     img_input = np.expand_dims(np.array(img)/255.0,0)
     preds = model.predict(img_input)
     pred_idx = np.argmax(preds,axis=1)[0]
@@ -171,15 +171,12 @@ else:
     bpm = 0.0
 st.metric("💓 Rythme cardiaque (BPM)", f"{bpm:.1f}")
 
-# Liste alpha 0→1 par pas 0.01
+# Alpha list 0→1 pas 0.01
 alpha_list = np.arange(0,1.01,0.01)
-st.sidebar.subheader("⚡ Variation FrFT (alpha)")
-st.sidebar.write(f"{len(alpha_list)} valeurs de alpha")
 
 # Segmentation et classification
 beats, centers = extract_beats(filtered, r_peaks, fs, pre_s, post_s, max_beats=4)
 st.subheader("Segmentation 4 battements max")
-cols = st.columns(len(beats))
 
 for i, beat in enumerate(beats):
     st.markdown(f"### Battement {i+1}")
@@ -191,7 +188,7 @@ for i, beat in enumerate(beats):
         pred_idx = np.argmax(preds,axis=1)[0]
         beat_results.append((a, pred_idx, preds[0]))
 
-    # Afficher l'image et prédiction pour alpha=0.5 par défaut
+    # Afficher image et prédiction pour alpha=0.5
     alpha_example = 0.5
     idx_example = int(alpha_example/0.01)
     img_example = frft_magnitude_image(beat, alpha_example, (224,224))
@@ -201,7 +198,7 @@ for i, beat in enumerate(beats):
     st.write("Classe:", label_full)
     st.write("Probabilités:", np.round(beat_results[idx_example][2],3))
 
-    # Optionnel : afficher tableau alpha vs prédiction
+    # Tableau alpha vs classe vs probabilité
     df_alpha = pd.DataFrame({
         "Alpha": [r[0] for r in beat_results],
         "Classe": [class_names[r[1]] for r in beat_results],
